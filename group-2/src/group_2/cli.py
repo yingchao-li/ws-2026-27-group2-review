@@ -22,6 +22,11 @@ def parser() -> argparse.ArgumentParser:
                         default=Path("group-2/results/fallback-v1/scores.jsonl"))
     result.add_argument("--subset-output", type=Path,
                         default=Path("group-2/results/fallback-v1/perceptual_quality_budget_0.25x.jsonl"))
+    result.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace existing output files (disabled by default to protect formal results)",
+    )
     return result
 
 
@@ -34,6 +39,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Manifest, scores output and subset output must be different paths")
         if any(path.is_relative_to(args.data_root.resolve()) for path in outputs):
             raise ValueError("Output paths must be outside --data-root to protect source data")
+        existing = [path for path in (args.scores_output, args.subset_output) if path.exists()]
+        if existing and not args.overwrite:
+            joined = ", ".join(str(path) for path in existing)
+            raise ValueError(
+                f"Refusing to overwrite existing output(s): {joined}; "
+                "pass --overwrite only for an intentional regeneration"
+            )
         records = load_manifest(args.manifest)
         manifest_sha256 = "sha256:" + hashlib.sha256(args.manifest.read_bytes()).hexdigest()
         scores, skipped = score_manifest(records, data_root=args.data_root)

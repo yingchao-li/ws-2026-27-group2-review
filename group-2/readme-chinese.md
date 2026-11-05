@@ -3,7 +3,7 @@
 > 项目：Quality-Aware Synthetic Data for Road Scene Understanding  
 > 小组：Group 2 — Perceptual Image Quality  
 > 成员：Yingchao Li、Jiaying Ping  
-> 当前版本：contrast-gradient fallback 第一版（2026-11-03）
+> 当前版本：contrast-gradient fallback 第一版，双版本整合并复核（2026-11-05）
 # Group 2 核心文件说明
 
 | 文件 | 价值 |
@@ -177,10 +177,11 @@ Subset 只保存记录 ID 和选择信息，不复制原始图片。
 
 ## 7. 验证结果
 
-本地和 HPC 上的相关测试均已通过：
+原版本记录了本地和 HPC 的 29 项测试通过。整合后在当前本地环境重新运行 Group 2
+及共享 Manifest、评分、选择接口测试，结果为：
 
 ```text
-29 passed
+32 passed
 ```
 
 完整结果还进行了额外验证，结果为：
@@ -204,9 +205,26 @@ score range: 0.0 to 1.0
 - subset 中的分数与 score overlay 一致；
 - 548 条记录确实是全部合格候选中的确定性 Top 548。
 
+整合时又使用当前仓库中的正式 Manifest 和结果执行了只读验证：78,883 条
+Manifest 记录全部通过 schema `1.1`；78,840 条分数恰好覆盖所有
+`analysis=true` 记录；原始分量与 min-max 归一化分数一致；548 条 subset 可由
+当前代码确定性重建，并可被公共 `SyntheticSegmentationDataset` 构造器接受。
+Manifest SHA-256 也与 HPC 日志及全部 subset 行一致。可复现该检查：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
+  group-2/.venv/bin/python group-2/scripts/validate_results.py
+```
+
+当前本地没有 `datasets/`，因此这次整合无法逐图重算 78,840 个原始分数；这不影响
+对 JSONL、归一化、资格过滤、Top-548 和公共训练读取接口的验证。
+
 ## 8. 当前发现与风险
 
-当前 Top 10 分数记录全部来自合成数据来源 `group4`。这并不一定表示实现错误，但可能说明 contrast-gradient fallback 偏好某种高对比度、强锐化或高频噪声风格。
+当前全体 analysis 候选中的 Top 10 分数记录全部来自合成数据来源 `group4`。
+`group4` 没有训练合格记录，所以这些图片不会进入最终 548 张 subset。这并不一定
+表示实现错误，但可能说明 contrast-gradient fallback 偏好某种高对比度、强锐化
+或高频噪声风格。
 
 因此，必须检查最高分与最低分示例图，确认：
 
@@ -227,9 +245,9 @@ score range: 0.0 to 1.0
 - [x] 生成 canonical manifest；
 - [x] 完成 78,840 张图片的全量评分；
 - [x] 生成并验证 548 张 subset；
-- [ ] 生成并人工检查 Top/Bottom 示例图；
-- [ ] 统计 548 张图片的 source-group 分布；
-- [ ] 将正式运行数据和局限补充到英文 README；
+- [x] 生成并人工检查 Top/Bottom 示例图；
+- [x] 统计 548 张图片的 source-group 分布；
+- [x] 将正式运行数据和局限补充到英文 README；
 - [ ] 由两位组员共同检查代码与结果；
 - [ ] 提交到课程 GitLab 的 `main`。
 

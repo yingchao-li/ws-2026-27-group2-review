@@ -1,5 +1,6 @@
 """TEST FIXTURES ONLY: tiny generated images, never seminar selection results."""
 
+import csv
 import hashlib
 import json
 import os
@@ -189,7 +190,8 @@ def test_cli_tiny_images_roundtrip_shared_interfaces_and_repeatability(tmp_path)
     scores_path = tmp_path / "TEST-ONLY-results/scores.jsonl"
     subset_path = tmp_path / "TEST-ONLY-results/subset.jsonl"
     args = ["--data-root", str(data_root), "--manifest", str(manifest),
-            "--scores-output", str(scores_path), "--subset-output", str(subset_path)]
+            "--scores-output", str(scores_path), "--subset-output", str(subset_path),
+            "--overwrite"]
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
                PYTHONPATH=os.pathsep.join([str(REPOSITORY / "src"), str(REPOSITORY / "group-2/src")]))
     result = subprocess.run([sys.executable, "-m", "group_2.cli", *args],
@@ -238,3 +240,90 @@ def test_cli_refuses_to_overwrite_input_or_data(tmp_path, capsys):
     with pytest.raises(SystemExit):
         main(["--data-root", str(tmp_path), "--scores-output", str(tmp_path / "input.png")])
     assert "protect source data" in capsys.readouterr().err
+
+
+def test_cli_protects_existing_results_without_explicit_overwrite(tmp_path, capsys):
+    manifest = tmp_path / "TEST-ONLY-canonical.jsonl"
+    manifest.write_text("TEST ONLY: deliberately not parsed\n", encoding="utf-8")
+    scores = tmp_path / "TEST-ONLY-scores.jsonl"
+    scores.write_text("TEST ONLY: preserve me\n", encoding="utf-8")
+    subset = tmp_path / "TEST-ONLY-subset.jsonl"
+
+    with pytest.raises(SystemExit) as error:
+        main([
+            "--manifest", str(manifest),
+            "--scores-output", str(scores),
+            "--subset-output", str(subset),
+        ])
+
+    assert error.value.code == 2
+    assert "Refusing to overwrite existing output" in capsys.readouterr().err
+    assert scores.read_text(encoding="utf-8") == "TEST ONLY: preserve me\n"
+    assert not subset.exists()
+
+
+def test_cli_help_starts_without_reading_data():
+    result = subprocess.run(
+        [sys.executable, "-m", "group_2.cli", "--help"],
+        cwd=REPOSITORY,
+        env=dict(
+            os.environ,
+            PYTHONDONTWRITEBYTECODE="1",
+            PYTHONPATH=os.pathsep.join([
+                str(REPOSITORY / "src"),
+                str(REPOSITORY / "group-2/src"),
+            ]),
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "--overwrite" in result.stdout
+
+
+def test_quality_report_cli_writes_all_artifacts_only_to_requested_directory(tmp_path):
+    data_root = tmp_path / "TEST-ONLY-data"
+    records = [_record(index) for index in range(550)]
+    for index, row in enumerate(records):
+        _save_image(data_root, row, detail=index % 2 == 0)
+    manifest = tmp_path / "TEST-ONLY-manifest.jsonl"
+    scores = tmp_path / "TEST-ONLY-scores.jsonl"
+    subset = tmp_path / "TEST-ONLY-subset.jsonl"
+    write_jsonl(records, manifest)
+    score_rows = [_score(row, index / 549) for index, row in enumerate(records)]
+    write_jsonl(score_rows, scores)
+    write_jsonl(select_subset(records, score_rows, manifest_sha256=CHECKSUM), subset)
+    output = tmp_path / "TEST-ONLY-report"
+    command = [
+        sys.executable,
+        str(REPOSITORY / "group-2/scripts/make_quality_report.py"),
+        "--project-root", str(tmp_path),
+        "--data-root", str(data_root),
+        "--manifest", str(manifest),
+        "--scores", str(scores),
+        "--subset", str(subset),
+        "--output-dir", str(output),
+    ]
+
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    with Image.open(output / "top_bottom_examples.jpg") as image:
+        assert image.size == (1600, 1060)
+    with (output / "source_group_distribution.csv").open(newline="") as handle:
+        assert list(csv.DictReader(handle)) == [{
+            "source_group": "group3",
+            "selected_count": "548",
+            "selected_fraction": "1.000000",
+        }]
+    with (output / "source_group_eligibility_and_selection.csv").open(newline="") as handle:
+        assert list(csv.DictReader(handle)) == [{
+            "source_group": "group3",
+            "analysis_count": "550",
+            "training_candidate_count": "550",
+            "selected_count": "548",
+            "selection_rate": "0.996364",
+        }]
+
+    second = subprocess.run(command, capture_output=True, text=True)
+    assert second.returncode != 0
+    assert "Refusing to overwrite existing report artifact" in second.stderr

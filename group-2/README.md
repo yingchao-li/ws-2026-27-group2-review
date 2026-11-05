@@ -2,143 +2,189 @@
 
 ## Status and research question
 
-**Fallback first version, metric version `1`.** This implementation scores synthetic
-images and selects a reproducible 548-image subset. It does not train or evaluate a
-segmentation model. We investigate whether selecting images by perceptual quality
-improves downstream segmentation at a fixed synthetic-data budget.
+Group 2 investigates whether selecting synthetic images by perceptual quality improves
+real-road semantic segmentation when the synthetic budget is fixed at **548 images**.
+The repository contains a complete first metric, deterministic selection, shared-interface
+tests, a formal full-pool scoring run, and descriptive analysis artifacts. It does **not**
+yet contain downstream DeepLabV3+ evidence, so a higher image-quality score must not be
+interpreted as better segmentation performance.
 
-The second metric, metric agreement/calibration analysis, top/bottom figures and
-downstream experiments are **not completed**. This first version is not evidence
-that the selected images improve segmentation.
+The two supplied Group 2 snapshots were audited on 2026-11-05. Their code, tests,
+scripts, logs, READMEs and two JSONL result files were byte-identical. The main snapshot
+additionally contained the two CSV summaries and the Top/Bottom figure listed below.
+The integration therefore keeps one implementation and preserves the main snapshot's
+additional artifacts; it does not maintain duplicate scorers or selectors.
 
-## Inputs and data paths
+## Completed and verified
 
-- A canonical JSONL manifest in shared schema `1.1`.
-- Synthetic images referred to by that manifest, from all source groups.
-- No real images or masks are read by this scorer or selector. Creating the shared
-  canonical manifest is a separate prerequisite; it indexes the real split names.
+- Contrast-gradient metric version `1`, including documented RGB decoding, grayscale
+  conversion, float precision, native-size processing and score direction.
+- Min-max normalization over all successfully scored `eligibility.analysis=true` rows.
+- Deterministic Top-548 selection from rows that are also
+  `eligibility.segmentation_training=true` (the canonical schema has no
+  `eligibility.train` field).
+- Shared score JSONL output, fixed-budget subset JSONL output, exact-manifest SHA-256
+  provenance, deterministic tie-breaking and seed metadata.
+- Relocated image lookup, duplicate-ID rejection, invalid-score rejection, missing or
+  corrupt image diagnostics, insufficient-pool failure, output/input collision checks,
+  and default protection against overwriting existing formal outputs.
+- Automated unit, boundary, CLI, schema, overlay-join and shared dataset-constructor
+  tests using temporary fixtures only.
+- Full-pool HPC scoring and selection plus a read-only local validation against the
+  exact canonical manifest and the shared training reader.
+- Top/Bottom examples and source-group eligibility/selection statistics.
 
-`--data-root` means the directory **containing `synthetic-data/`**, default `datasets`.
-For example, canonical `datasets/synthetic-data/group3/images/example.png` resolves
-to `<data-root>/synthetic-data/group3/images/example.png`. Absolute canonical paths
-containing `synthetic-data/` are relocated using that same suffix. The canonical
-IDs and input manifest are never rewritten. Preserve the original internal paths;
-there is no filename guessing. Manifest/output arguments are relative to the
-current working directory unless absolute.
+### Formal artifacts found in this working tree
 
-`source_group=group2` refers to a previous seminar's image source, not our team.
-Our scorer uses every `eligibility.analysis=true` row, irrespective of source group.
+| Artifact | Verified content |
+| --- | --- |
+| `results/fallback-v1/scores.jsonl` | 78,840 analysis-eligible rows; normalized range `[0, 1]`; SHA-256 `3d1410c57b91cc18f2d75d2ab81c9ed3a958a3993155099f66ebdec1449a9693` |
+| `results/fallback-v1/perceptual_quality_budget_0.25x.jsonl` | exactly 548 unique, ranked, training-eligible rows; SHA-256 `f63674deb150ab619d05b09bc33429404c24ae29db2d2ed73a61bc2a2ad106c8` |
+| `results/fallback-v1/top_bottom_examples.jpg` | valid 1600×1060 JPEG showing the global score pool's 10 highest and 10 lowest examples |
+| `results/fallback-v1/source_group_distribution.csv` | selected counts: group3 309, group5 141, group7 69, group9 29 |
+| `results/fallback-v1/source_group_eligibility_and_selection.csv` | per-source analysis, training-candidate, selected counts and selection rates |
+| `logs/build-manifest-12841196.out` | successful 78,883-row manifest build: 78,840 analysis and 43,800 training eligible |
+| `logs/score-quality-12841210.out` | successful full scoring run with 0 skipped images and the same 548-row subset |
 
-## Method and selection
+The exact manifest used by the formal results is present as
+`synthetic-data-seminar/manifest.jsonl`. Its SHA-256 is
+`f50ef57736713ff9f9c83950ad453acf4501719358056cd4ad8d4ce2275fdf8e`, matching both
+the HPC log and every subset row. The read-only validator confirmed all 78,883 manifest
+rows against schema `1.1`, exact score coverage of the 78,840 analysis rows,
+raw-to-normalized min-max consistency, the deterministic eligible Top-548 reconstruction,
+both CSVs, the figure's file integrity and acceptance of all selected rows by
+`SyntheticSegmentationDataset`.
 
-1. Load the canonical manifest with shared `load_manifest`. Reject duplicate IDs.
-2. Read only analysis-eligible images, one at a time. Decode with Pillow
-   `convert("RGB")`, retain uint8 intensity range 0–255, and calculate in float64.
-   There is no resizing, cropping, EXIF rotation or intensity rescaling.
-3. Compute grayscale as the unweighted arithmetic mean of RGB channels and use the
-   repository's contrast-gradient formula:
+The source images are not available in this local checkout (`datasets/` is absent), so
+the 78,840 raw scores could not be recomputed pixel by pixel here. The existing results
+remain compatible with the unchanged metric and selection implementation and do not need
+regeneration. Pixel-level reproduction requires the original dataset copy.
 
-   ```text
-   raw = std(gray)
-       + mean(abs(diff(gray, axis=0)))
-       + mean(abs(diff(gray, axis=1)))
-   ```
+## Metric and selection definition
 
-4. Min-max normalize across all successfully scored analysis rows to `[0, 1]`.
-   Higher is better. A constant pool receives `1.0` for every image, matching the
-   shared normalizer. Sort score rows by `synthetic_id` for reproducible output.
-5. Keep only records with both eligibility flags true and a valid score. Sort by
-   descending score, then ascending `synthetic_id`, and select **exactly 548**.
-   No source-group quotas or random sampling are applied. The subset's `seed=42`
-   follows the shared metadata convention; this algorithm has no random operation.
-6. Validate scores using shared `validate_score_overlay`; write both JSONL files
-   using shared `write_jsonl`. The 548-candidate check runs before either file is
-   written. Too few scored training candidates cause a clear error (CLI exit 2),
-   with no new outputs; previous output files, if any, remain untouched.
+Pillow decodes each analysis-eligible image with `convert("RGB")`. The resulting uint8
+0–255 array is converted to float64 without resizing, cropping, EXIF transposition or
+intensity rescaling. Grayscale is the unweighted arithmetic mean of the three channels:
 
-Missing, corrupt or smaller-than-2×2 images are skipped with a `SKIPPED` diagnostic
-on stderr. They receive no score and cannot be selected. Non-finite/invalid array
-fixtures are also rejected. Malformed score rows, unknown IDs and duplicate IDs
-are errors. Outputs must be different from the input manifest and outside the
-data root. Existing output files at the requested paths are replaced on success.
+```python
+gray = np.mean(rgb, axis=2)
 
-## Local setup and tests
+raw_score = (
+    np.std(gray)
+    + np.mean(np.abs(np.diff(gray, axis=0)))
+    + np.mean(np.abs(np.diff(gray, axis=1)))
+)
+```
 
-Run commands from the repository root with Python 3.11 or newer. A small scoring
-environment needs only NumPy and Pillow; tests additionally need pytest and
-jsonschema. There is no requirement to install Torch or download model weights.
+Raw scores are min-max normalized across every successfully scored analysis row:
+
+```text
+score = (raw_score - min_raw) / (max_raw - min_raw)
+```
+
+Higher is better. If the whole pool is constant, the shared normalizer assigns `1.0` to
+every row. Missing, corrupt, non-finite or smaller-than-2×2 images receive no score and
+are reported as skipped. Images keep their native dimensions, so resolution and source
+style can influence the metric.
+
+Selection retains only records with both canonical eligibility flags true, sorts by
+`(-score, synthetic_id)`, and takes exactly 548. Fewer than 548 valid training candidates
+is an error; the budget is never silently reduced. `seed=42` is shared metadata only—this
+selection algorithm has no random operation. Each subset row records the SHA-256 of the
+exact input manifest bytes.
+
+## Setup and tests
+
+Run from the `ws-2026-27/` repository root with Python 3.11 or newer:
 
 ```bash
 python3 -m venv group-2/.venv
 group-2/.venv/bin/python -m pip install numpy Pillow pytest jsonschema
-PYTHONDONTWRITEBYTECODE=1 group-2/.venv/bin/python -m pytest -q -p no:cacheprovider group-2/tests tests/test_scoring.py tests/test_selection.py tests/test_manifest.py
+PYTHONDONTWRITEBYTECODE=1 group-2/.venv/bin/python -m pytest \
+  -q -p no:cacheprovider \
+  group-2/tests tests/test_scoring.py tests/test_selection.py tests/test_manifest.py
 ```
 
-All test images/manifests/outputs are temporary **TEST ONLY** fixtures. The end-to-end
-test generates 550 four-by-four PNGs to verify the actual 548 selection budget; it
-does not use seminar data. Tests cover the formula and direction, deterministic
-scores/selection, tie-breaking, invalid/missing images, eligibility filtering,
-insufficient candidates, shared schema validation, overlay joins, repeatable CLI
-output and compatibility with the shared synthetic dataset constructor.
+All generated test images, manifests and outputs live in pytest temporary directories.
+The end-to-end fixture creates 550 four-by-four images to exercise the real 548-image
+budget without touching the formal artifacts.
 
-There is no reduced-budget production option. A tiny image sample is useful for
-development, but cannot produce a formal 548-row subset; use the fixture tests
-above instead of presenting sample results as a complete seminar selection.
-
-## Run when the canonical manifest and full candidate data are ready
+Validate the existing formal result bundle without reading source images or modifying
+any file:
 
 ```bash
-PYTHONPATH=src:group-2/src group-2/.venv/bin/python -m group_2.cli \
-  --data-root datasets \
-  --manifest synthetic-data-seminar/manifest.jsonl \
-  --scores-output group-2/results/fallback-v1/scores.jsonl \
-  --subset-output group-2/results/fallback-v1/perceptual_quality_budget_0.25x.jsonl
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
+  group-2/.venv/bin/python group-2/scripts/validate_results.py
 ```
 
-Set `--data-root /absolute/path/to/datasets` to read a relocated local copy.
-`PYTHONPATH` is necessary because the root package installer does not install
-`group_2`; pytest adds this path automatically. Use `--help` to inspect the CLI.
+This validator requires `jsonschema` and checks the canonical JSON Schema, score schema,
+normalization, exact eligibility coverage, deterministic Top-548 reconstruction, manifest
+checksum, shared training-constructor compatibility and any locally present analysis
+artifacts.
 
-This command performs scoring and selection only. Before treating the output as
-a full-pool result, use a complete canonical manifest, confirm all expected images
-are present, and inspect any skipped-file diagnostics. Merely having 548 readable
-candidates does not establish that the full candidate pool was evaluated.
+## Scoring and report commands
 
-## Outputs and shared interfaces
+For a new or deliberately separate run, point outputs at new paths:
 
-| Output | Contract and content |
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
+  group-2/.venv/bin/python -m group_2.cli \
+  --data-root /absolute/path/to/datasets \
+  --manifest synthetic-data-seminar/manifest.jsonl \
+  --scores-output /tmp/group2-run/scores.jsonl \
+  --subset-output /tmp/group2-run/perceptual_quality_budget_0.25x.jsonl
+```
+
+`--data-root` is the directory containing `synthetic-data/`. Canonical paths are
+relocated from their `synthetic-data/...` suffix; IDs and manifest rows are never
+rewritten. Output paths must differ from the manifest and remain outside the data root.
+Existing outputs are refused by default. `--overwrite` is available only for an
+explicitly intended regeneration; do not use it on the preserved formal results without
+first archiving them.
+
+After a full run, generate both CSV summaries and the Top/Bottom figure with:
+
+```bash
+group-2/.venv/bin/python group-2/scripts/make_quality_report.py \
+  --data-root /absolute/path/to/datasets \
+  --output-dir /tmp/group2-report
+```
+
+The report script also refuses existing outputs by default. It needs the source images for
+the figure, unlike `validate_results.py`.
+
+## Output contracts and shared training compatibility
+
+| Output | Contract |
 | --- | --- |
-| `scores.jsonl` | Shared score schema `1.0`: `synthetic_id`, `method=perceptual_fallback`, `method_version=1` (string), `direction=higher_is_better`, normalized `score`, raw score in `components`, preprocessing/normalization in `provenance`. One row per successfully scored analysis image. |
-| `perceptual_quality_budget_0.25x.jsonl` | Exactly 548 shared-style subset rows: schema `1.0`, ID, `selected=true`, rank 1–548, method, `budget=budget_0.25x`, seed and source group. Also records score/method/version and `manifest_sha256` (SHA-256 of the exact input manifest bytes). |
+| `scores.jsonl` | Shared score schema `1.0`: `synthetic_id`, `method=perceptual_fallback`, string `method_version=1`, `direction=higher_is_better`, normalized `score`, raw component and preprocessing/normalization provenance. Rows are ordered by ID. |
+| `perceptual_quality_budget_0.25x.jsonl` | Exactly 548 rows with `selected=true`, ranks 1–548, `method=perceptual_quality_budget_0.25x`, `budget=budget_0.25x`, seed metadata, source group, score method/version and `manifest_sha256`. |
 
-The canonical manifest remains the source of paths and supervision metadata. The
-shared training code joins subset IDs back to it; no images are copied into the
-subset. The canonical `manifest.schema.json` validates canonical rows, not these
-score/subset rows. Scores use the shared Python validator; subsets follow the
-shared selector's fields and the training consumer's ID join. No public code or
-configuration was changed. A Group 2 experiment YAML is not supplied in this
-version; whoever starts shared training must configure its canonical/subset paths.
+The shared training code reads subset IDs, joins them to the canonical manifest and passes
+the resulting rows to `SyntheticSegmentationDataset`; no image is copied into the subset.
+For a later training run, the experiment configuration must use the canonical manifest,
+this 548-row subset and `synthetic_samples: 548`.
 
-Generated results live under `group-2/results/fallback-v1/`, which is ignored by the
-existing repository rules. Fixture outputs are never committed as formal results.
+## Limitations and remaining research work
 
-## Limitations and later work
+Contrast and gradients measure visible detail, not human opinion or downstream utility.
+Noise, excessive sharpening, extreme contrast, native resolution and source-group style
+can raise the score. The global Top-10 visualization is dominated by source group4, which
+has no training-eligible records; the actual selected subset uses only eligible groups.
+Scores also depend on the normalization pool and cannot be compared directly across
+different pools.
 
-- Contrast and gradients measure detail, not human perceptual quality. Noise,
-  excessive sharpening and artifacts can receive high scores. Brightness/contrast,
-  native image size and source-group differences can bias the ranking.
-- Scores depend on the normalization pool, so scores from a small sample and the
-  full pool are not directly comparable. Ties use IDs, not source-image diversity.
-- Eligibility and supervision metadata are trusted; this code does not re-audit
-  real masks or prove synthetic/source geometry alignment. Full canonical JSON
-  Schema validation is exercised in fixtures; runtime loading uses the shared
-  loader's version checks rather than a full dataset audit.
-- The scorer holds metadata and scalar scores in memory, but only one decoded image
-  at a time. This first version has no score cache, resume or parallel workers.
-- The two-person extension still needs a second justified metric, calibration and
-  agreement analysis. SSIM/LPIPS are optional and require justified alignment and
-  paired real training images.
-- The final project protocol compares `perceptual_quality_budget_0.25x` with
-  instructor-provided `real_only` and the exact `random_budget_0.25x`, using training
-  seeds 17, 42 and 73. Those downstream runs and result bundles are separate work;
-  this local first version does not execute them.
+The following project work is genuinely incomplete:
+
+1. Add and justify a second independent no-reference quality metric.
+2. Calibrate metric direction/scale and perform agreement, correlation and sensitivity
+   analyses; paired-reference metrics require proven geometric alignment.
+3. Run the downstream DeepLabV3+ experiments for
+   `perceptual_quality_budget_0.25x` with seeds 17, 42 and 73.
+4. Compare those results with the instructor-provided `real_only` and the exact
+   `random_budget_0.25x` baseline on real validation and test splits.
+5. Report mean ± standard deviation and analyze whether quality selection changes
+   segmentation performance.
+
+Optional engineering improvements such as parallel decoding, resumable score caches and
+additional plots are lower priority than the research steps above.
