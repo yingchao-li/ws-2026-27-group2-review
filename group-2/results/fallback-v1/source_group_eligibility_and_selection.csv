@@ -1,0 +1,10 @@
+source_group,analysis_count,training_candidate_count,selected_count,selection_rate
+group1,8760,0,0,0.000000
+group2,8760,0,0,0.000000
+group3,8760,8760,309,0.035274
+group4,8760,0,0,0.000000
+group5,8760,8760,141,0.016096
+group6,8760,0,0,0.000000
+group7,8760,8760,69,0.007877
+group8,8760,8760,0,0.000000
+group9,8760,8760,29,0.003311

@@ -1,0 +1,4 @@
+# Separate Group 2 extension environment; the repository's shared dependencies remain unchanged.
+pyiqa==0.1.16
+scipy>=1.11,<2
+matplotlib>=3.8,<4

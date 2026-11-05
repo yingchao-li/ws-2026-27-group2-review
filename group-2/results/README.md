@@ -25,3 +25,8 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
 
 Formal provenance, counts and hashes are documented in `group-2/README.md` and in the
 HPC logs under `group-2/logs/`.
+
+The NIQE/BRISQUE implementation targets separate `niqe-v1/` and `brisque-v1/`
+directories. Those directories are not formal results until an HPC run has scanned the
+complete analysis pool and written `completion.json`. A smoke-test checkpoint or a
+`--max-images` run must never be copied or renamed into a formal result directory.

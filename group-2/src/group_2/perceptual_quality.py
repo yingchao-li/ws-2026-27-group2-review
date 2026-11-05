@@ -132,6 +132,26 @@ def select_subset(
     *,
     manifest_sha256: str,
 ) -> list[dict[str, Any]]:
+    """Return the unchanged fallback Top-548 selection."""
+    return select_ranked_subset(
+        records,
+        scores,
+        manifest_sha256=manifest_sha256,
+        score_method=METHOD,
+        score_method_version=METHOD_VERSION,
+        subset_method=SUBSET_METHOD,
+    )
+
+
+def select_ranked_subset(
+    records: Iterable[Mapping[str, Any]],
+    scores: Iterable[Mapping[str, Any]],
+    *,
+    manifest_sha256: str,
+    score_method: str,
+    score_method_version: str,
+    subset_method: str,
+) -> list[dict[str, Any]]:
     """Return exactly 548 scored training candidates, ordered by (-score, ID)."""
     indexed = _index_records(records)
     validated = validate_score_overlay(scores)
@@ -140,8 +160,8 @@ def select_subset(
         key = score["synthetic_id"]
         if key not in indexed:
             raise ValueError(f"Score references unknown synthetic_id: {key}")
-        if score["method"] != METHOD or score["method_version"] != METHOD_VERSION:
-            raise ValueError(f"Expected {METHOD} version {METHOD_VERSION} scores")
+        if score["method"] != score_method or score["method_version"] != score_method_version:
+            raise ValueError(f"Expected {score_method} version {score_method_version} scores")
         flags = indexed[key].get("eligibility", {})
         if flags.get("analysis") is True and flags.get("segmentation_training") is True:
             candidates.append(score)
@@ -157,13 +177,13 @@ def select_subset(
             "synthetic_id": row["synthetic_id"],
             "selected": True,
             "rank": rank,
-            "method": SUBSET_METHOD,
+            "method": subset_method,
             "budget": "budget_0.25x",
             "seed": 42,
             "source_group": indexed[row["synthetic_id"]]["source_group"],
             "score": row["score"],
-            "score_method": METHOD,
-            "score_method_version": METHOD_VERSION,
+            "score_method": score_method,
+            "score_method_version": score_method_version,
             "manifest_sha256": manifest_sha256,
         }
         for rank, row in enumerate(candidates[:size], 1)
