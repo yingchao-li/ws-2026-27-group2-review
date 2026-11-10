@@ -46,11 +46,35 @@ canonical产物进入阶段提交而制作的同字节副本，不是下载或�
 
 ## 方法和结果
 
+### 主要方法决定 — 2026-11-10
+
+**Contrast-gradient fallback v1 是本组论文和 Task 2 的主要方法。**
+我们选择这个透明、计算成本可行的质量代理指标，检验基于对比度和梯度的筛选能否改善
+下游分割。它的全量分数和准确的 Top-548 已经能够复现，但这尚不代表感知质量或分割
+性能更优。本决定记录于下游训练和测试集评价之前，不会根据哪个指标取得最佳测试结果
+来更换主要方法。
+
+主要实验仍为 `perceptual_quality_budget_0.25x`，使用 `perceptual_fallback` 版本 `1`
+及现有 `results/fallback-v1/perceptual_quality_budget_0.25x.jsonl`。为兼容已有产物，
+保留名称中的“fallback”；它不再表示主要方法将被其他指标替代。公式、归一化和已选定的
+548 张图片均保持不变。
+
+NIQE 和 BRISQUE 定位为计划中的**独立补充指标比较**，完成全量评分后各自产生 Top-548。
+我们不将它们的分数与主要方法融合，也不根据它们的下游结果重新选择主要方法。
+完成这两项补充工作不是开展 fallback 主要实验的前提。主要比较仍使用 DeepLabV3+、
+种子17、42、73以及真实验证/测试数据，对照 `real_only` 和 `random_budget_0.25x`。
+
 | 方法 | 说明 | 当前结果 |
 | --- | --- | --- |
-| 1. Contrast-gradient fallback | 灰度标准差加水平、垂直绝对梯度；越高越好 | **已完成：** 78,840条分数、0 skipped、确定性Top-548 |
-| 2. NIQE | pyiqa无参考自然场景统计指标；原始分数越低越好 | 代码和真实HPC Smoke Test已完成；**尚无全量结果** |
-| 3. BRISQUE | pyiqa无参考空间自然场景统计指标；原始分数越低越好 | 代码和真实HPC Smoke Test已完成；**尚无全量结果** |
+| 1. Contrast-gradient fallback — 主要方法 | 灰度标准差加水平、垂直绝对梯度；越高越好 | **评分/筛选已完成：** 78,840条分数、0 skipped、确定性Top-548；下游训练待完成 |
+| 2. NIQE — 补充比较 | pyiqa无参考自然场景统计指标；原始分数越低越好 | 代码和真实HPC Smoke Test已完成；**尚无全量结果** |
+| 3. BRISQUE — 补充比较 | pyiqa无参考空间自然场景统计指标；原始分数越低越好 | 代码和真实HPC Smoke Test已完成；**尚无全量结果** |
+
+### 主要分数与固定筛选规则
+
+正式图片通过 Pillow `convert("RGB")` 解码（8位像素，范围0–255）；alpha 被丢弃，
+不与背景合成。计算使用 `float64`，不重新缩放像素数值。灰度为 RGB 算术平均值，
+标准差使用 `ddof=0`。保留图片原始尺寸，不进行 resize、裁剪或 EXIF 旋转。
 
 已经完成正式结果的 fallback 公式为：
 
@@ -63,17 +87,80 @@ raw_score = (
 )
 ```
 
-分数通过 min-max 归一化到 `[0,1]`。筛选时只保留同时满足
-`eligibility.analysis=true` 和 `eligibility.segmentation_training=true` 的记录，
-按 `(-score, synthetic_id)` 排序，固定选择548张。
+令 `P` 为固定 Manifest 中成功评分的全部 analysis 合格图片，
+`a = min(raw_score in P)`，`b = max(raw_score in P)`。
+当 `b > a` 时，`score = (raw_score - a) / (b - a)`；当 `b == a` 时，全部设为
+`score = 1`。极值来自完整有效 analysis 池，在训练资格过滤之前计算。筛选只保留同时
+满足 `eligibility.analysis=true` 和 `eligibility.segmentation_training=true` 的记录，
+按 `(-score, synthetic_id)` 排序，固定选择548张。有效训练候选不足548张则报错。
+
+无法读取/缺失图片、无效或非有限像素/分数以及小于2×2的图片会被跳过，fallback CLI
+会报告原因；重复 canonical ID 会被拒绝。正式验证器要求分数覆盖每个 analysis 合格ID；
+现有运行已通过验证，共78,840条分数、0 skipped。存在缺失分数的运行必须先调查原因，
+才能判断是否属于等价复现。
+
+**局限性与来源策略：** 三个原始分量的系数均为1，没有分别归一化，因此较大尺度的分量
+可能主导评分。噪声、光晕、过度锐化和文字类伪影可能提高代理分数。全局 min-max 对
+异常极值敏感。筛选保证 `synthetic_id` 唯一，但不限制每个 `original_id` 的入选数量，
+不进行 variant/内容去重，也没有来源组配额。需要分析并报告来源/变体集中度；修改这些
+规则会构成独立实验，不属于已固定的 v1 筛选。
 
 提交的Strategy符合subset schema `1.0`，包含 `synthetic_id`、rank、method、budget、
 seed、source group、score method/version和准确的Manifest SHA-256。
+其中 `seed=42` 仅为元数据；确定性 Top-548 不使用随机抽样。
 
 NIQE 和 BRISQUE 使用 `pyiqa==0.1.16`。先保存原始分数，只有完整评分池处理完毕后
 才统一转换为越高越好的归一化分数。两个真实HPC Smoke Test均完成8/8张图片、
 0 skipped。它们目前没有全量结果，因为当前逐张安全评分流程较慢，处理78,840张
 预计需要**数十小时**，可能需要多次HPC断点恢复。Smoke输出不作为正式研究结果。
+
+### 补充指标的精确定义
+
+对每个指标独立计算：扫描完全部 Manifest 后，令 `a`、`b` 为成功评分的全部 analysis
+合格图片中有限原始分数的最小值、最大值。方向由运行时 `lower_better` 元数据决定：
+越低越好时 `score = 1 - (raw - a)/(b - a)`，否则
+`score = (raw - a)/(b - a)`。当 `a == b` 时所有有效分数均为 `1`；有效池为空则无法
+产生 Top-548。不按来源分别归一化，不做百分位截断、缺失分数填补、加权融合或根据
+测试成绩选择指标。每个独立筛选器沿用主方法的资格、预算和平分排序规则。
+
+固定版本 `pyiqa==0.1.16` 的路径接口将文件转换为 `[0,1]` RGB 张量，丢弃 alpha，
+增加 batch 维度。我们的包装层不增加 resize、裁剪或 EXIF 旋转。
+NIQE 内部使用 YIQ 亮度、取整和 float64，裁剪为完整96×96块，并在两个尺度提取特征。
+BRISQUE 使用两个尺度的亮度统计、内部半尺寸重采样和预训练 SVR。这些库内部操作与
+fallback 预处理不同。实现细节已按固定版本的上游
+[输入接口](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/models/inference_model.py)、
+[NIQE](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/archs/niqe_arch.py)、
+[BRISQUE](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/archs/brisque_arch.py)
+源码核对。
+
+缺失/损坏图片、库异常及 NaN/Inf 原始分数写为带原因的 `skipped` checkpoint 记录。
+部分运行不发布归一化分数或 subset。扫描完全部记录后，现有管线即使有跳过也可能按
+有限分数池发布产物，因此 `completion.json` 表示扫描完成，不代表评分池与 fallback
+一致。正式比较前须检查 `skipped.jsonl` 和 `pool_consistency.json`。不一致必须调查并
+明确报告，相关性只使用共同有效 ID。差异未解决或未在训练前明确修订比较协议时，不能
+声称完成了相同评分池实验。运行版本、方向和设备记录于 `run.json` 和分数 provenance，
+恢复运行时会检查一致性。
+
+### Task 1 反馈：已完成的集中度分析
+
+固定548张子集覆盖 **298个原始场景**；其中102个场景入选多张，合计352张；单个场景
+最多入选7张。548个 `(source_group, original_id, variant)` 组合互不相同，但没有内容
+哈希，无法确认像素内容是否完全重复。五个训练候选组各占20%，入选后group3占56.39%
+（候选占比的2.82倍），group8为0。因此质量筛选与来源/变体分布存在混杂；这些统计
+不能证明某个生成组更好或分割性能提高。
+
+详见[反馈回应报告](FEEDBACK_TASK1_RESPONSE.md)和
+[分析摘要](analysis/task1-feedback-v1/summary.json)。从仓库根目录复现到新目录：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
+  group-2/.venv/bin/python group-2/scripts/audit_selection.py \
+  --output-dir group-2/analysis/task1-feedback-reproduction
+```
+
+脚本只读 Manifest 和现有 JSONL，核对固定 Top-548、计算输入哈希，输出来源组、文件夹、
+原始场景和 variant 的 JSON/CSV 统计；输出目录已存在则拒绝覆盖。稳健归一化以及新的
+去重/配额规则暂列为可选消融实验，不改变主要 v1。
 
 ## 运行方法
 
@@ -202,6 +289,7 @@ checkpoint 和训练结果属于大型运行产物，不应加入 Git；已提�
 | `scripts/` | 验证与分析入口 |
 | `scripts/hpc/` | NIQE/BRISQUE HPC运行 |
 | `tests/` | 自动化测试 |
+| `analysis/task1-feedback-v1/` | 只读集中度分析产物 |
 | `results/fallback-v1/` | 已完成的fallback正式结果 |
 | `logs/` | 历史Slurm日志 |
 
@@ -211,6 +299,7 @@ checkpoint 和训练结果属于大型运行产物，不应加入 Git；已提�
 | --- | --- |
 | `README.md` | 英文项目说明 |
 | `readme-chinese.md` | 中文项目说明 |
+| `FEEDBACK_TASK1_RESPONSE.md` | 反馈逐项回应与集中度发现 |
 | `HPC_NIQE_BRISQUE.md` | HPC运行说明 |
 | `manifest.jsonl` | 提交的canonical Manifest |
 | `requirements-iqa.txt` | NIQE/BRISQUE依赖 |
@@ -220,6 +309,9 @@ checkpoint 和训练结果属于大型运行产物，不应加入 Git；已提�
 | `src/group_2/nr_iqa.py` | NIQE/BRISQUE评分管线 |
 | `src/group_2/nr_iqa_cli.py` | NIQE/BRISQUE命令行入口 |
 | `src/group_2/metric_comparison.py` | 指标比较统计与绘图 |
+| `src/group_2/selection_audit.py` | 场景、变体和来源集中度分析 |
+| `scripts/audit_selection.py` | 只读分析 CLI |
+| `tests/test_selection_audit.py` | 分析统计与输入输出保护测试 |
 | `scripts/build_manifest.slurm` | Manifest生成任务 |
 | `scripts/score_quality.slurm` | fallback评分任务 |
 | `scripts/make_quality_report.py` | fallback图和CSV报告 |
@@ -242,7 +334,7 @@ checkpoint 和训练结果属于大型运行产物，不应加入 Git；已提�
 
 ## 验证结果
 
-- 本地自动化测试：**39 passed，2 skipped**。
+- 反馈修订后的本地自动化测试：**45 passed，2 skipped**。
 - 提交Manifest：**78,883条schema-1.1记录**。
 - Strategy schema：**548条唯一、排序、训练合格记录**。
 - NIQE HPC Smoke：**8 valid，0 skipped**。
@@ -251,17 +343,19 @@ checkpoint 和训练结果属于大型运行产物，不应加入 Git；已提�
 
 ## 尚未完成的实验
 
-- NIQE和BRISQUE全量评分及各自Top-548。
-- 三种指标的相关性和重合分析。
-- 种子17、42、73的DeepLabV3+训练。
-- 与 `real_only`、`random_budget_0.25x` 的比较。
+- 主要实验：在HPC上检查源图片的噪声/过度锐化；没有内容哈希，像素完全重复仍待验证。
+- 主要实验：种子17、42、73的DeepLabV3+训练，以及与 `real_only`、
+  `random_budget_0.25x` 的比较。
+- 补充实验：NIQE/BRISQUE全量评分、各自独立的Top-548及跨指标相关性/重合分析。
 
 ## 下一步工作
 
-1. 断点继续NIQE和BRISQUE，完成全部78,840张评分。
-2. 生成两个指标的归一化分数、Top-548和比较图。
-3. 比较相关性、Top-548重合率和来源组入选率。
-4. 使用种子17、42、73训练DeepLabV3+。
-5. 与 `real_only`、`random_budget_0.25x` 在真实验证集和测试集上比较。
+1. 使用已完成的场景/变体/来源分析讨论集中度，并在HPC检查入选图片伪影，保留固定的
+   v1 筛选规则。
+2. 使用DeepLabV3+、种子17、42、73以及真实验证/测试数据，将主要 fallback 子集与
+   `real_only`、`random_budget_0.25x` 比较。
+3. 算力允许时完成NIQE/BRISQUE补充比较；在用其子集训练前，检查跳过图片和评分池
+   一致性报告。
+4. 报告补充指标的相关性、Top-548重合率和来源组入选率，不根据结果更换主要方法。
 
 在下游实验完成前，质量分数更高或不同质量指标相关，不能被解释为语义分割性能提高。

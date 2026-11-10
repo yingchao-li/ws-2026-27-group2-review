@@ -51,11 +51,40 @@ decision after receiving the instructor's feedback.
 
 ## Methodology and results
 
+### Primary-method decision — 2026-11-10
+
+**Contrast-gradient fallback v1 is our primary method for the paper and Task 2.**
+We choose this transparent, computationally practical quality proxy to test whether
+contrast-and-gradient-based selection improves downstream segmentation. Its full-pool
+scores and exact Top-548 are already reproducible; this does not establish perceptual or
+segmentation superiority. The decision is recorded before downstream training and test
+evaluation, and will not be changed based on which metric achieves the best test result.
+
+The primary experiment remains `perceptual_quality_budget_0.25x`, using
+`perceptual_fallback` version `1` and the existing
+`results/fallback-v1/perceptual_quality_budget_0.25x.jsonl`. The name "fallback" is retained
+for artifact compatibility; it no longer means that another metric will replace the
+primary method. The formula, normalization and selected 548 images are unchanged.
+
+NIQE and BRISQUE are planned **separate supplementary metric comparisons**, each with
+its own Top-548 if full scoring is completed. We do not combine their scores with the
+primary method or select a new primary method from their downstream results. Their
+completion is not a prerequisite for the primary fallback experiment. Its required
+comparisons remain `real_only` and `random_budget_0.25x`, using DeepLabV3+ with seeds
+17, 42 and 73 and real validation/test data.
+
 | Method | Description | Current result |
 | --- | --- | --- |
-| 1. Contrast-gradient fallback | Grayscale standard deviation plus horizontal and vertical absolute gradients; higher is better | **Complete:** 78,840 scores, 0 skipped, deterministic Top-548 |
-| 2. NIQE | pyiqa no-reference natural-scene-statistics metric; raw score is lower-is-better | Code and real HPC smoke test complete; **no full result yet** |
-| 3. BRISQUE | pyiqa no-reference spatial natural-scene-statistics metric; raw score is lower-is-better | Code and real HPC smoke test complete; **no full result yet** |
+| 1. Contrast-gradient fallback — primary | Grayscale standard deviation plus horizontal and vertical absolute gradients; higher is better | **Scoring/selection complete:** 78,840 scores, 0 skipped, deterministic Top-548; downstream training pending |
+| 2. NIQE — supplementary | pyiqa no-reference natural-scene-statistics metric; raw score is lower-is-better | Code and real HPC smoke test complete; **no full result yet** |
+| 3. BRISQUE — supplementary | pyiqa no-reference spatial natural-scene-statistics metric; raw score is lower-is-better | Code and real HPC smoke test complete; **no full result yet** |
+
+### Primary score and fixed selection rules
+
+Production images are decoded with Pillow `convert("RGB")` (8-bit values, 0–255);
+alpha is discarded without background compositing. Computation uses `float64` with no
+intensity rescaling. Grayscale is the arithmetic RGB mean, and standard deviation uses
+`ddof=0`. Images keep their native dimensions: no resizing, cropping or EXIF rotation.
 
 The completed fallback score is:
 
@@ -68,12 +97,31 @@ raw_score = (
 )
 ```
 
-Scores are min-max normalized to `[0, 1]`. Selection keeps records with both
-`eligibility.analysis=true` and `eligibility.segmentation_training=true`, sorts by
-`(-score, synthetic_id)`, and selects exactly 548 images.
+Let `P` be all successfully scored, analysis-eligible images in the fixed Manifest,
+`a = min(raw_score in P)` and `b = max(raw_score in P)`. Normalization is
+`score = (raw_score - a) / (b - a)` when `b > a`, and `score = 1` for every image when
+`b == a`. Extrema come from the full valid analysis pool, before training eligibility
+filtering. Selection keeps records with both `eligibility.analysis=true` and
+`eligibility.segmentation_training=true`, sorts by `(-score, synthetic_id)`, and selects
+exactly 548 images. Fewer than 548 valid training candidates causes an error.
+
+Unreadable/missing images, invalid or non-finite pixel/score values and images smaller
+than 2×2 are skipped with reasons reported by the fallback CLI. Duplicate canonical IDs
+are rejected. The formal validator requires scores for every analysis-eligible ID; the
+existing run passes with 78,840 scores and zero skips. A run with missing scores must be
+investigated before it can be treated as an equivalent reproduction.
+
+**Limitations and source policy:** the three raw components have coefficients of one
+and are not normalized individually, so a component with a larger scale can dominate.
+Noise, halos, oversharpening and text-like artifacts may increase this proxy score.
+Global min-max scaling is sensitive to outliers. Selection enforces unique
+`synthetic_id` values, but has no cap per `original_id`, no variant/content deduplication
+and no source-group quotas. Source/variant concentration must be analyzed and reported;
+changing these rules would define a separate experiment, not the frozen v1 selection.
 
 The submitted Strategy follows subset schema `1.0` and records `synthetic_id`, selection
 rank, method, budget, seed, source group, score method/version and exact manifest SHA-256.
+Its `seed=42` field is metadata only; deterministic Top-548 uses no random sampling.
 
 NIQE and BRISQUE use `pyiqa==0.1.16`. Their raw values are saved first and converted to
 normalized higher-is-better scores only after the complete image pool has been processed.
@@ -81,6 +129,61 @@ Both real HPC smoke tests processed 8/8 images with zero skips. Full results are
 available because the current safe one-image-at-a-time pipeline is slow: processing all
 78,840 images is expected to take **tens of hours** and may require several resumed HPC
 jobs. Smoke outputs are not reported as research results.
+
+### Supplementary score definitions
+
+For each metric independently, let `a` and `b` be the minimum and maximum finite raw
+scores over all successfully scored analysis-eligible images, after the entire Manifest
+has been scanned. The runtime `lower_better` metadata determines direction:
+`score = 1 - (raw - a)/(b - a)` for lower-is-better, otherwise
+`score = (raw - a)/(b - a)`. If `a == b`, all valid scores are `1`; an empty valid pool
+cannot produce Top-548. No per-source scaling, percentile clipping, score imputation,
+composite weights or test-driven metric selection is used. Each separate selector uses
+the same eligibility, budget and tie-break as the primary method.
+
+The fixed `pyiqa==0.1.16` path interface converts files to RGB tensors in `[0,1]`, drops
+alpha, and adds a batch dimension. Our wrapper adds no resize, crop or EXIF rotation.
+NIQE internally uses YIQ luminance, rounding and float64, crops to whole 96×96 blocks
+and extracts features at two scales. BRISQUE uses luminance statistics at two scales
+with internal half-size resampling and its pretrained SVR. These library operations
+must not be confused with fallback preprocessing. Implementation details were checked
+against the pinned upstream [input loader](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/models/inference_model.py),
+[NIQE](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/archs/niqe_arch.py)
+and [BRISQUE](https://github.com/chaofengc/IQA-PyTorch/blob/v0.1.16/pyiqa/archs/brisque_arch.py) sources.
+
+Missing/corrupt images, library exceptions and NaN/Inf raw scores become explicit
+`skipped` checkpoint rows with reasons. Partial runs publish no normalized score/subset.
+After full scanning, the current pipeline can publish outputs for the finite pool even
+with skips: `completion.json` means scanning finished, not that the pool matches fallback.
+Check `skipped.jsonl` and `pool_consistency.json` before any formal comparison. A mismatch
+requires investigation and explicit reporting; correlations use the common valid IDs.
+Do not claim a matched-pool experiment until the discrepancy is resolved or a revised
+comparison protocol is documented before training. Runtime version, direction and
+device are recorded in `run.json` and score provenance; resume checks their consistency.
+
+### Task 1 feedback: completed concentration audit
+
+The fixed 548-image subset covers **298 original scenes**. Of these, 102 contribute
+multiple images (352 selected images); at most 7 selected images share one original.
+There are 548 distinct `(source_group, original_id, variant)` triples, but no content
+hashes are available, so exact image duplication is unverified. Candidate groups each
+contribute 20%; group3 occupies 56.39% of the selection (2.82× its candidate share),
+whereas group8 contributes zero. Quality is therefore confounded with source/variant
+distribution; these counts do not establish a generator's quality or segmentation gain.
+
+See [the feedback response](FEEDBACK_TASK1_RESPONSE.md) and the reproducible
+[audit summary](analysis/task1-feedback-v1/summary.json). Regenerate into a new directory:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:group-2/src \
+  group-2/.venv/bin/python group-2/scripts/audit_selection.py \
+  --output-dir group-2/analysis/task1-feedback-reproduction
+```
+
+The audit reads only Manifest and existing JSONL files, validates the exact frozen
+Top-548 and hashes inputs, then writes JSON and CSV tables for groups, folders, original
+scenes and variants. It rejects existing output directories. Robust rescaling and new
+deduplication/quota rules are deferred optional ablations; neither changes primary v1.
 
 ## How to Run
 
@@ -213,6 +316,7 @@ These are image-quality selection results, not segmentation-performance results.
 | `scripts/` | Validation and analysis entry points |
 | `scripts/hpc/` | NIQE/BRISQUE HPC execution |
 | `tests/` | Automated tests |
+| `analysis/task1-feedback-v1/` | Read-only concentration audit outputs |
 | `results/fallback-v1/` | Completed formal fallback results |
 | `logs/` | Historical Slurm logs |
 
@@ -222,6 +326,7 @@ These are image-quality selection results, not segmentation-performance results.
 | --- | --- |
 | `README.md` | English project summary |
 | `readme-chinese.md` | Chinese project summary |
+| `FEEDBACK_TASK1_RESPONSE.md` | Feedback checklist and concentration findings |
 | `HPC_NIQE_BRISQUE.md` | HPC run instructions |
 | `manifest.jsonl` | Submitted canonical manifest |
 | `requirements-iqa.txt` | NIQE/BRISQUE dependencies |
@@ -231,6 +336,9 @@ These are image-quality selection results, not segmentation-performance results.
 | `src/group_2/nr_iqa.py` | NIQE/BRISQUE pipeline |
 | `src/group_2/nr_iqa_cli.py` | NIQE/BRISQUE CLI |
 | `src/group_2/metric_comparison.py` | Metric comparison statistics and plots |
+| `src/group_2/selection_audit.py` | Scene, variant and source concentration audit |
+| `scripts/audit_selection.py` | Read-only audit CLI |
+| `tests/test_selection_audit.py` | Audit counts and input/output safeguards |
 | `scripts/build_manifest.slurm` | Manifest generation job |
 | `scripts/score_quality.slurm` | Fallback scoring job |
 | `scripts/make_quality_report.py` | Fallback figure and CSV report |
@@ -253,7 +361,7 @@ These are image-quality selection results, not segmentation-performance results.
 
 ## Validation
 
-- Local automated tests: **39 passed, 2 skipped**.
+- Local automated tests after feedback revisions: **45 passed, 2 skipped**.
 - Submitted manifest: **78,883 schema-1.1 rows**.
 - Strategy schema: **548 unique, ranked, training-eligible rows**.
 - NIQE HPC smoke: **8 valid, 0 skipped**.
@@ -262,18 +370,23 @@ These are image-quality selection results, not segmentation-performance results.
 
 ## Incomplete experiments
 
-- Full-pool NIQE and BRISQUE scoring and their Top-548 subsets.
-- Correlation and overlap analysis across all three metrics.
-- DeepLabV3+ training for seeds 17, 42 and 73.
-- Comparison with `real_only` and `random_budget_0.25x`.
+- Primary: inspect source images on HPC to assess noise/oversharpening; exact content
+  duplication remains unverified without content hashes.
+- Primary: DeepLabV3+ training for seeds 17, 42 and 73 and comparison with `real_only`
+  and `random_budget_0.25x`.
+- Supplementary: full-pool NIQE/BRISQUE scoring, their separate Top-548 subsets and
+  cross-metric correlation/overlap analysis.
 
 ## Next steps
 
-1. Resume NIQE and BRISQUE until all 78,840 images are processed.
-2. Generate their normalized scores, Top-548 subsets and comparison plots.
-3. Compare correlations, Top-548 overlap and source-group selection rates.
-4. Train DeepLabV3+ with seeds 17, 42 and 73.
-5. Compare with `real_only` and `random_budget_0.25x` on real validation/test data.
+1. Use the completed scene/variant/source audit to discuss concentration and inspect
+   selected image artifacts on HPC, retaining the fixed v1 selection rules.
+2. Evaluate the primary fallback subset against `real_only` and `random_budget_0.25x`
+   with DeepLabV3+, seeds 17, 42 and 73, and real validation/test data.
+3. Complete NIQE/BRISQUE as supplementary comparisons when compute permits; check their
+   skipped-image and pool-consistency reports before using their subsets for training.
+4. Report supplementary correlations, Top-548 overlap and source-group selection rates
+   without changing the primary method according to the results.
 
 Quality-score improvement or agreement between IQA metrics must not be interpreted as
 segmentation improvement before the downstream experiments are complete.

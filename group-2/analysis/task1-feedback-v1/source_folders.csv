@@ -1,0 +1,8 @@
+source_folder,training_candidates,selected,candidate_share,selected_share,selection_rate,representation_ratio
+datasets/synthetic-data/group3/images,8760,309,0.2,0.5638686131386861,0.03527397260273973,2.81934306569343
+datasets/synthetic-data/group5/images/01,4380,0,0.1,0.0,0.0,0.0
+datasets/synthetic-data/group5/images/02/images,2190,70,0.05,0.12773722627737227,0.0319634703196347,2.5547445255474455
+datasets/synthetic-data/group5/images/03/images,2190,71,0.05,0.12956204379562045,0.032420091324200914,2.591240875912409
+datasets/synthetic-data/group7/images,8760,69,0.2,0.1259124087591241,0.007876712328767124,0.6295620437956204
+datasets/synthetic-data/group8/images,8760,0,0.2,0.0,0.0,0.0
+datasets/synthetic-data/group9/images,8760,29,0.2,0.05291970802919708,0.003310502283105023,0.2645985401459854

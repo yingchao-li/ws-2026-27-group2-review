@@ -1,0 +1,41 @@
+{
+  "analysis_images": 78840,
+  "interpretation": "Descriptive concentration, not evidence of segmentation improvement or exact pixel duplication",
+  "manifest_sha256": "sha256:f50ef57736713ff9f9c83950ad453acf4501719358056cd4ad8d4ce2275fdf8e",
+  "method_version": "1",
+  "policy": "Unique synthetic_id only; no original/variant/content deduplication or source quotas",
+  "primary_method": "perceptual_fallback",
+  "schema_version": "1.0",
+  "scores_sha256": "sha256:3d1410c57b91cc18f2d75d2ab81c9ed3a958a3993155099f66ebdec1449a9693",
+  "selected": {
+    "content_duplicate_assessment": "incomplete_hash_coverage",
+    "images": 548,
+    "images_beyond_one_per_original": 250,
+    "images_from_repeated_originals": 352,
+    "images_with_content_hash": 0,
+    "max_images_per_original": 7,
+    "original_ids_with_multiple_images": 102,
+    "repeated_known_content_hashes": 0,
+    "top10_original_image_share": 0.09671532846715329,
+    "unique_group_original_pairs": 325,
+    "unique_group_original_variant_triples": 548,
+    "unique_original_ids": 298
+  },
+  "selected_largest_source_group_share": 0.5638686131386861,
+  "selected_source_group_hhi": 0.40280515744046025,
+  "subset_sha256": "sha256:f63674deb150ab619d05b09bc33429404c24ae29db2d2ed73a61bc2a2ad106c8",
+  "training_candidates": {
+    "content_duplicate_assessment": "incomplete_hash_coverage",
+    "images": 43800,
+    "images_beyond_one_per_original": 41610,
+    "images_from_repeated_originals": 43800,
+    "images_with_content_hash": 0,
+    "max_images_per_original": 20,
+    "original_ids_with_multiple_images": 2190,
+    "repeated_known_content_hashes": 0,
+    "top10_original_image_share": 0.0045662100456621,
+    "unique_group_original_pairs": 10950,
+    "unique_group_original_variant_triples": 43800,
+    "unique_original_ids": 2190
+  }
+}
